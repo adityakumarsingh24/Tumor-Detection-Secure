@@ -1,41 +1,61 @@
+/**
+ * Convert PEM public key to ArrayBuffer (robust)
+ */
 async function pemToArrayBuffer(pem) {
-    // fetch the PEM string, remove header/footer, decode base64
-    const b64 = pem.replace(/-----BEGIN PUBLIC KEY-----/, '')
-                   .replace(/-----END PUBLIC KEY-----/, '')
-                   .replace(/\s+/g, '');
-    const binary = atob(b64);
+    // Remove headers, footers, and non-base64 characters
+    const b64 = pem
+        .replace(/-----BEGIN PUBLIC KEY-----/g, '')
+        .replace(/-----END PUBLIC KEY-----/g, '')
+        .replace(/[^A-Za-z0-9+/=]/g, '');
+    let binary;
+    try {
+        binary = atob(b64);
+    } catch (err) {
+        console.error('Base64 decoding failed:', err);
+        console.log('Invalid Base64 string:', b64);
+        throw new Error('Invalid PEM format or corrupted public key.');
+    }
     const len = binary.length;
     const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-        bytes[i] = binary.charCodeAt(i);
-    }
+    for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
 }
 
+/**
+ * Import server public key as CryptoKey
+ */
 async function importServerPublicKey(pem) {
-    const spki = await pemToArrayBuffer(pem);
-    return await window.crypto.subtle.importKey(
-        'spki',
-        spki,
-        {
-            name: 'RSA-OAEP',
-            hash: 'SHA-256'
-        },
-        false,
-        ['encrypt']
-    );
+    const spkiBuffer = await pemToArrayBuffer(pem);
+    try {
+        return await crypto.subtle.importKey(
+            'spki',
+            spkiBuffer,
+            { name: 'RSA-OAEP', hash: 'SHA-256' },
+            false,
+            ['encrypt']
+        );
+    } catch (err) {
+        console.error('Failed to import server public key:', err);
+        throw new Error('Invalid public key format or unsupported key type.');
+    }
 }
 
+/**
+ * Convert ArrayBuffer to Base64
+ */
 function ab2b64(buf) {
-    let binary = '';
     const bytes = new Uint8Array(buf);
-    const chunk = 0x8000;
+    const chunk = 0x8000; // chunk to avoid stack limits
+    let binary = '';
     for (let i = 0; i < bytes.length; i += chunk) {
         binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
     }
     return btoa(binary);
 }
 
+/**
+ * Handle file upload, AES+RSA encryption, and submission
+ */
 document.getElementById('upload-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const statusEl = document.getElementById('status');
@@ -54,26 +74,35 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
         // Fetch server public key PEM
         const resp = await fetch('/static/server_pub.pem');
         const pem = await resp.text();
-
-        // Import RSA public key
         const serverPubKey = await importServerPublicKey(pem);
 
         // Generate AES-GCM key
-        const aesKey = await crypto.subtle.generateKey({name: 'AES-GCM', length: 256}, true, ['encrypt', 'decrypt']);
+        const aesKey = await crypto.subtle.generateKey(
+            { name: 'AES-GCM', length: 256 },
+            true,
+            ['encrypt', 'decrypt']
+        );
         const rawAes = await crypto.subtle.exportKey('raw', aesKey);
 
         // Read file as ArrayBuffer
         const fileBuf = await file.arrayBuffer();
 
-        // Encrypt file bytes with AES-GCM
-        const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit nonce
-        const cipherBuf = await crypto.subtle.encrypt({name: 'AES-GCM', iv: iv}, aesKey, fileBuf);
+        // Encrypt file with AES-GCM
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const cipherBuf = await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: iv },
+            aesKey,
+            fileBuf
+        );
 
-        // Append tag is already part of cipherBuf in WebCrypto (ciphertext includes the tag at the end)
-        // Encrypt raw AES key with server RSA public key (RSA-OAEP)
-        const encryptedKeyBuf = await crypto.subtle.encrypt({name: 'RSA-OAEP'}, serverPubKey, rawAes);
+        // Encrypt AES key with server RSA public key
+        const encryptedKeyBuf = await crypto.subtle.encrypt(
+            { name: 'RSA-OAEP' },
+            serverPubKey,
+            rawAes
+        );
 
-        // Convert to base64
+        // Convert everything to Base64
         const payload = {
             encrypted_key: ab2b64(encryptedKeyBuf),
             iv: ab2b64(iv.buffer),
@@ -82,9 +111,10 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
 
         statusEl.textContent = 'Uploading encrypted blob...';
 
+        // Send payload to server
         const res = await fetch('/predict', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
