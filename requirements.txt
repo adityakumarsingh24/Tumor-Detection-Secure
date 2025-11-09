@@ -3,3 +3,5 @@ numpy
 Pillow
 pycryptodome
 gunicorn
+tensorflow
+keras
