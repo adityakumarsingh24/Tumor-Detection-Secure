@@ -2,10 +2,11 @@
  * Convert PEM public key to ArrayBuffer (robust)
  */
 async function pemToArrayBuffer(pem) {
-    // Remove headers, footers, and non-base64 characters
+    // Remove headers, footers, whitespace, and non-base64 characters
     const b64 = pem
         .replace(/-----BEGIN PUBLIC KEY-----/g, '')
         .replace(/-----END PUBLIC KEY-----/g, '')
+        .replace(/\s+/g, '')          // remove all whitespace/newlines
         .replace(/[^A-Za-z0-9+/=]/g, '');
     let binary;
     try {
@@ -71,8 +72,9 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
     const file = input.files[0];
 
     try {
-        // Fetch server public key PEM
-        const resp = await fetch('server_pub.pem');
+        // Fetch server public key PEM from static folder
+        const resp = await fetch('/static/server_pub.pem'); // ensure path is correct
+        if (!resp.ok) throw new Error('Failed to fetch server public key');
         const pem = await resp.text();
         const serverPubKey = await importServerPublicKey(pem);
 
