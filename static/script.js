@@ -72,7 +72,7 @@ document.getElementById('upload-form').addEventListener('submit', async (e) => {
 
     try {
         // Fetch server public key PEM
-        const resp = await fetch('/static/server_pub.pem');
+        const resp = await fetch('server_pub.pem');
         const pem = await resp.text();
         const serverPubKey = await importServerPublicKey(pem);
 
