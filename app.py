@@ -118,9 +118,25 @@ def predict():
         print("❌ Unexpected server error:", e)
         return jsonify({"error": str(e)}), 500
 
-
 # ============================================================
 # ✅ SERVER ENTRY POINT
 # ============================================================
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    import os
+    import sys
+
+    # Detect Render or any production environment
+    if os.environ.get("RENDER") == "true" or os.environ.get("IS_RENDER") == "true":
+        print("🚀 Running with Gunicorn (Render production mode)")
+        from gunicorn.app.wsgiapp import run
+        sys.argv = [
+            "gunicorn",
+            "app:app",
+            "--timeout", "180",   # ⏰ 3-minute timeout
+            "--workers", "1",     # 🧠 single worker to reduce memory
+            "--threads", "1"
+        ]
+        run()
+    else:
+        print("🧩 Running Flask development server (local mode)")
+        app.run(host='0.0.0.0', port=5000, debug=True)
